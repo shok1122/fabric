@@ -45,7 +45,7 @@
 #   - unit-test - runs the go-test based unit tests
 #   - verify - runs unit tests for only the changed package tree
 
-ALPINE_VER ?= 3.14
+ALPINE_VER ?= 3.13
 BASE_VERSION = 2.3.2
 
 # 3rd party image version
@@ -235,6 +235,7 @@ $(BUILD_DIR)/images/%/$(DUMMY):
 	docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(TWO_DIGIT_VERSION)
 	docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(DOCKER_TAG)
 	@touch $@
+	@echo "Finish Building Docker image $(DOCKER_NS)/fabric-$*"
 
 # builds release packages for the host platform
 .PHONY: release
