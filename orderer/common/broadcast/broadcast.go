@@ -7,14 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 package broadcast
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	"github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
+	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 )
 
@@ -132,6 +139,122 @@ func (mt *MetricsTracker) BeginEnqueue() {
 	mt.EnqueueStartTime = time.Now()
 }
 
+func GetHeaderString(a_psHeader *cb.Header, a_strIndex string) string {
+	sChHeader, _ := protoutil.UnmarshalChannelHeader(a_psHeader.GetChannelHeader())
+	sSigHeader, _ := protoutil.UnmarshalSignatureHeader(a_psHeader.GetSignatureHeader())
+	sCreator, _ := protoutil.UnmarshalSerializedIdentity(sSigHeader.GetCreator())
+
+	strChHeader, _ := json.Marshal(sChHeader)
+
+	return fmt.Sprintf(""+
+		"%[1]schannel-header: %[2]s\n"+
+		"%[1]ssignature-header: \n"+
+		"%[1]s  creator: \n"+
+		"%[1]s    mspid: %[3]s\n"+
+		"%[1]s    id_bytes: %[4]s\n"+
+		"%[1]s  nonce: %[5]X",
+		a_strIndex,
+		strChHeader,
+		sCreator.Mspid,
+		sCreator.IdBytes,
+		sSigHeader.Nonce)
+}
+
+func GetTxReadWriteSetString(a_psTxReadWriteSet *rwset.TxReadWriteSet, a_strIndex string) string {
+	s := fmt.Sprintf("%sdata-model: %s\n",
+		a_strIndex,
+		rwset.TxReadWriteSet_DataModel_name[int32(a_psTxReadWriteSet.DataModel)])
+	for i1, v1 := range a_psTxReadWriteSet.NsRwset {
+		psKVRWSet := &kvrwset.KVRWSet{}
+		_ = proto.Unmarshal(v1.GetRwset(), psKVRWSet)
+		strKVReads := ""
+		for i2, v2 := range psKVRWSet.Reads {
+			strKVReads += fmt.Sprintf("%s      [%d] key:%s, ver:%#v\n", a_strIndex, i2, v2.Key, v2.Version)
+		}
+		strKVWrites := ""
+		for i2, v2 := range psKVRWSet.Writes {
+			strKVWrites += fmt.Sprintf("%s      [%d] key:%s, is-delete:%t, value:%s\n", a_strIndex, i2, v2.Key, v2.IsDelete, string(v2.Value))
+		}
+		s += fmt.Sprintf(""+
+			"%[1]snsrwset[%[2]d]: \n"+
+			"%[1]s  namespace: %[3]s\n"+
+			"%[1]s  rwset: \n"+
+			"%[1]s    reads: \n"+
+			"%[4]s\n"+
+			"%[1]s    writes: \n"+
+			"%[5]s",
+			a_strIndex,
+			i1,
+			v1.Namespace,
+			strKVReads,
+			strKVWrites)
+	}
+	return s
+}
+
+func GetTransactionActionString(a_psActions []*peer.TransactionAction, a_strIndex string) string {
+
+	s := ""
+	for i, v := range a_psActions {
+		psHeader, _ := protoutil.UnmarshalHeader(v.Header)
+		strHeader := GetHeaderString(psHeader, fmt.Sprintf("%s    ", a_strIndex))
+		psPayload, _ := protoutil.UnmarshalChaincodeActionPayload(v.Payload)
+		psEndorsedAction := psPayload.GetAction()
+		psProposalResponsePayload, _ := protoutil.UnmarshalProposalResponsePayload(psEndorsedAction.ProposalResponsePayload)
+		psChaincodeAction, _ := protoutil.UnmarshalChaincodeAction(psProposalResponsePayload.GetExtension())
+		psTxReadWriteSet := &rwset.TxReadWriteSet{}
+		_ = proto.Unmarshal(psChaincodeAction.GetResults(), psTxReadWriteSet)
+		strTxReadWriteSet := GetTxReadWriteSetString(psTxReadWriteSet, fmt.Sprintf("%s          ", a_strIndex))
+		psEvents, _ := protoutil.UnmarshalChaincodeEvents(psChaincodeAction.GetEvents())
+		psResponse := psChaincodeAction.Response
+		s += fmt.Sprintf(""+
+			"%[1]saction[%[2]d]: \n"+
+			"%[1]s  header: \n"+
+			"%[3]s\n"+
+			"%[1]s  payload: \n"+
+			"%[1]s    action: \n"+
+			"%[1]s      proposal-hash: %[4]X\n"+
+			"%[1]s      extension: \n"+
+			"%[1]s        results: \n"+
+			"%[5]s\n"+
+			"%[1]s        events: %[6]s\n"+
+			"%[1]s        response: %[7]s",
+			a_strIndex,
+			i,
+			strHeader,
+			psProposalResponsePayload.GetProposalHash(),
+			strTxReadWriteSet,
+			psEvents.String(),
+			psResponse.String())
+	}
+	return s
+}
+
+func GetPayloadString(msg *cb.Envelope) string {
+
+	payload, _ := protoutil.UnmarshalPayload(msg.GetPayload())
+
+	psHeader := payload.GetHeader()
+	strHeader := GetHeaderString(psHeader, "  ")
+
+	bData := payload.GetData()
+	sTransaction, _ := protoutil.UnmarshalTransaction(bData)
+	sActions := sTransaction.GetActions()
+
+	strAction := GetTransactionActionString(sActions, "    ")
+
+	s := fmt.Sprintf("\n"+
+		"header: \n"+
+		"%s\n"+
+		"data: \n"+
+		"  input: \n"+
+		"%s\n",
+		strHeader,
+		strAction)
+
+	return s
+}
+
 // ProcessMessage validates and enqueues a single message
 func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.BroadcastResponse) {
 	tracker := &MetricsTracker{
@@ -147,7 +270,9 @@ func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.Broad
 	}()
 	tracker.BeginValidate()
 
-	chdr, isConfig, processor, err := bh.SupportRegistrar.BroadcastChannelSupport(msg)
+	chdr, isConfig, processor, err := bh.SupportRegistrar.BroadcastChannelSupport(msg) // goto orderer/common/multichannel/registrar.go:425
+	logger.Debugf("!!! [channel: %s] processor: %#v", chdr.ChannelId, processor)
+
 	if chdr != nil {
 		tracker.ChannelID = chdr.ChannelId
 		tracker.TxType = cb.HeaderType(chdr.Type).String()
@@ -178,6 +303,9 @@ func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.Broad
 			logger.Warningf("[channel: %s] Rejecting broadcast of normal message from %s with SERVICE_UNAVAILABLE: rejected by Order: %s", chdr.ChannelId, addr, err)
 			return &ab.BroadcastResponse{Status: cb.Status_SERVICE_UNAVAILABLE, Info: err.Error()}
 		}
+
+		logger.Debugf("!!! [channel: %s] msg: %s", chdr.ChannelId, GetPayloadString(msg))
+
 	} else { // isConfig
 		logger.Debugf("[channel: %s] Broadcast is processing config update message from %s", chdr.ChannelId, addr)
 
