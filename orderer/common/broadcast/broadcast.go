@@ -175,6 +175,39 @@ func GetTxReadWriteSetString(a_psTxReadWriteSet *rwset.TxReadWriteSet, a_strInde
 		for i2, v2 := range psKVRWSet.Writes {
 			strKVWrites += fmt.Sprintf("%s      [%d] key:%s, is-delete:%t, value:%s\n", a_strIndex, i2, v2.Key, v2.IsDelete, string(v2.Value))
 		}
+		strCollectionHashedRwset := ""
+		for _, v2 := range v1.CollectionHashedRwset {
+			psHashedRWSet := &kvrwset.HashedRWSet{}
+			_ = proto.Unmarshal(v2.HashedRwset, psHashedRWSet)
+			strHashedReads := ""
+			for i3, v3 := range psHashedRWSet.HashedReads {
+				strHashedReads += fmt.Sprintf("%s            [%d] key:%X, ver:%#v\n", a_strIndex, i3, v3.KeyHash, v3.Version)
+			}
+			strHashedWrites := ""
+			for i3, v3 := range psHashedRWSet.HashedWrites {
+				strHashedWrites += fmt.Sprintf("%s            [%d] key:%X, is-delete:%t, value:%#v\n", a_strIndex, i3, v3.KeyHash, v3.IsDelete, v3.ValueHash)
+			}
+			strMetadataWrites := ""
+			for i3, v3 := range psHashedRWSet.MetadataWrites {
+				strMetadataWrites += fmt.Sprintf("%s            [%d] key:%X, entries:%#v\n", a_strIndex, i3, v3.KeyHash, v3.Entries)
+			}
+			strCollectionHashedRwset += fmt.Sprintf(""+
+				"%[1]s      - collection-name: %[2]s\n"+
+				"%[1]s        hashed-rwset: \n"+
+				"%[1]s          hashed-reads: \n"+
+				"%[3]s \n"+
+				"%[1]s          hashed-writes: \n"+
+				"%[4]s \n"+
+				"%[1]s          metadata-writes: \n"+
+				"%[5]s \n"+
+				"%[1]s        private-rwset-hash: %[6]X\n",
+				a_strIndex,
+				v2.CollectionName,
+				strHashedReads,
+				strHashedWrites,
+				strMetadataWrites,
+				v2.PvtRwsetHash)
+		}
 		s += fmt.Sprintf(""+
 			"%[1]snsrwset[%[2]d]: \n"+
 			"%[1]s  namespace: %[3]s\n"+
@@ -182,12 +215,15 @@ func GetTxReadWriteSetString(a_psTxReadWriteSet *rwset.TxReadWriteSet, a_strInde
 			"%[1]s    reads: \n"+
 			"%[4]s\n"+
 			"%[1]s    writes: \n"+
-			"%[5]s",
+			"%[5]s\n"+
+			"%[1]s    collection-hashed-rwset: \n"+
+			"%[6]s",
 			a_strIndex,
 			i1,
 			v1.Namespace,
 			strKVReads,
-			strKVWrites)
+			strKVWrites,
+			strCollectionHashedRwset)
 	}
 	return s
 }
